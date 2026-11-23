@@ -1,0 +1,66 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Ring Steinturm</title>
+<style>html,body{margin:0;background:#222}canvas{width:270px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { buehne, gold, stein, glattesRingNetz } from '/lib/welt.js';
+import { neueRunde, STEINE, RING, STUFEN, FPS, RUNDE_SEK, konfiguriere } from '/szenen/ring-steinturm.js';
+import { waehleVariante } from '/lib/variante.js';
+// ?seed=2026-11-24 -> Szene des Tages; ?schnell=1 -> für Rechner ohne Grafikkarte
+const q = new URLSearchParams(location.search);
+const schnell = q.get('schnell') === '1';
+const V = q.get('seed') ? waehleVariante(q.get('seed')) : {};
+konfiguriere(V, schnell ? { fps: 30 } : {});
+const OBEN = STEINE[STEINE.length - 1].y + STEINE[STEINE.length - 1].ry;
+const ZIELY = OBEN * 0.57, ABST = 6.0 * (OBEN + 1.25) / 3.04;
+
+const b = buehne({ farbe: V.hintergrund?.farbe ?? '#b9c2cd', kamera: [0, ZIELY + 0.63, ABST], ziel: [0, ZIELY, 0], fein: schnell ? 1 : 1.35, mitAO: !schnell });
+document.body.appendChild(b.aus);
+
+STEINE.forEach((e, i) => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 128, 96), stein((V.steinSaat ?? 11) + i, { sprenkel: i === 0 ? 0.25 : 1 }));
+  m.scale.set(e.rx, e.ry, e.rz);
+  m.position.set(e.x, e.y, e.z);
+  m.rotation.y = i * 1.7;
+  m.castShadow = m.receiveShadow = true;
+  b.szene.add(m);
+});
+
+const netz = glattesRingNetz(RING.nu, RING.nv, 4);
+const ring = new THREE.Mesh(netz.geo, gold(V.material ?? {}));
+ring.castShadow = ring.receiveShadow = true;
+b.szene.add(ring);
+
+const proRunde = Math.round(FPS * RUNDE_SEK);
+const PROBEN = schnell ? 2 : 3;                      // Zwischenbilder für Bewegungsunschärfe (180°-Verschluss)
+
+let runde = null, rundeNr = -1;
+window.GESAMT = proRunde * STUFEN.length;
+window.FPS = FPS;
+window.TONVORLAGE = 'ring';
+const kamStart = b.cam.position.clone();
+window.bild = (f) => {
+  const nr = Math.floor(f / proRunde);
+  if (nr !== rundeNr) { rundeNr = nr; runde = neueRunde(STUFEN[nr]); }
+  // sanfte, langsame Kamerafahrt über das ganze Video
+  const t = f / FPS;
+  b.cam.position.set(kamStart.x, kamStart.y, kamStart.z - 0.07 * ABST * (f / window.GESAMT)); // ganz langsames, gleichmäßiges Heranfahren
+  b.cam.lookAt(0, ZIELY, 0);
+  const halb = runde.sub / 2, je = halb / PROBEN;
+  runde.schritte(halb);
+  b.mischeAnfang();
+  for (let s = 0; s < PROBEN; s++) {
+    runde.schritte(je);
+    netz.aktualisiere(runde.oberflaeche());
+    b.mischeBild();
+  }
+  const aufprall = runde.koerper.holeAufprall();
+  const kontakte = runde.koerper.holeKontakte();
+  const jpg = b.mischeEnde(`${STUFEN[nr]}% SOFT`);
+  return { jpg, aufprall, kontakte, runde: nr, neu: f % proRunde === 0 };
+};
+window.BEREIT = true;
+</script>
+</body></html>

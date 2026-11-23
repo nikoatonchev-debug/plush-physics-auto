@@ -1,0 +1,41 @@
+# Jeden Tag ein neues „Plush Physics“-Video – läuft komplett auf GitHub, nicht auf dem eigenen PC.
+name: Video des Tages
+
+on:
+  schedule:
+    - cron: '0 4 * * *'        # täglich 04:00 UTC (05:00 deutsche Winterzeit)
+  workflow_dispatch:            # zusätzlich per Knopfdruck startbar
+    inputs:
+      startwert:
+        description: 'Startwert (leer = heutiges Datum)'
+        required: false
+
+permissions:
+  contents: write               # zum Anlegen der Veröffentlichung mit dem Video
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Werkzeuge installieren
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          npm ci || npm install
+      - name: Video berechnen
+        env:
+          CHROME_PFAD: /usr/bin/google-chrome
+        run: node werkzeuge/taeglich.mjs "${{ github.event.inputs.startwert }}"
+      - name: Video veröffentlichen (Releases-Seite)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DATEI=$(ls ausgabe/video-*.mp4 | head -1)
+          NAME=$(basename "$DATEI" .mp4)
+          TITEL=$(node -e "console.log(require('./ausgabe/'+process.argv[1]+'.json').titel)" "$NAME")
+          gh release create "$NAME-$GITHUB_RUN_ID" "$DATEI" "ausgabe/$NAME.json" --title "$TITEL" --notes "Automatisch erstellt."
