@@ -39,9 +39,3 @@ jobs:
           NAME=$(basename "$DATEI" .mp4)
           TITEL=$(node -e "console.log(require('./ausgabe/'+process.argv[1]+'.json').titel)" "$NAME")
           gh release create "$NAME-$GITHUB_RUN_ID" "$DATEI" "ausgabe/$NAME.json" --title "$TITEL" --notes "Automatisch erstellt."
-      - name: Auf YouTube hochladen
-        env:
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-        run: node werkzeuge/youtube.mjs "$(ls ausgabe/video-*.mp4 | head -1)" privat
