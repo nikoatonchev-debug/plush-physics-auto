@@ -1,0 +1,27 @@
+# Lädt das zuletzt erzeugte Video (aus „Releases“) noch einmal auf YouTube hoch – zum Testen.
+name: Letztes Video hochladen
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hochladen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Letztes Video holen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ausgabe
+          gh release download --pattern 'video-*' --dir ausgabe
+          ls -la ausgabe
+      - name: Auf YouTube hochladen (privat)
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: node werkzeuge/youtube.mjs "$(ls ausgabe/video-*.mp4 | head -1)" privat
