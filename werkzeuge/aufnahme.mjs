@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import puppeteer from 'puppeteer-core';
 import { tonspur } from './ton.mjs';
+import { tonspurPillen } from './ton_pillen.mjs';
 
 const WURZEL = path.resolve(import.meta.dirname, '..');
 const name = process.argv[2] || 'ring-steinturm';
@@ -38,6 +39,8 @@ page.setDefaultTimeout(0);
 const gesamt = bis ?? await page.evaluate('window.GESAMT');
 const fps = await page.evaluate('window.FPS || 30');
 const tonVorlage = await page.evaluate("window.TONVORLAGE || 'ring'");
+const tonArt = await page.evaluate("window.TONART || ''");
+const bildEreignisse = [];
 
 const ziele = einzel ? new Set(einzel) : null;
 const letzte = einzel ? Math.max(...einzel) : gesamt - 1;
@@ -53,6 +56,7 @@ for (let f = 0; f <= letzte; f++) {
   const nurPhysik = !!ziele && !ziele.has(f);
   const r = await page.evaluate((i, n) => window.bild(i, n), f, nurPhysik);
   ereignisse.push({ f, aufprall: r.aufprall, kontakte: r.kontakte ?? 0, runde: r.runde, neu: r.neu });
+  bildEreignisse.push(r.ereignisse || []);
   if (ziele?.has(f) || !ziele) {
     const buf = Buffer.from(r.jpg.split(',')[1], 'base64');
     if (ziele) fs.writeFileSync(path.join(AUS, `${name}-bild${f}.jpg`), buf);
@@ -63,13 +67,14 @@ for (let f = 0; f <= letzte; f++) {
 console.log();
 await browser.close(); server.close();
 const ereignisDatei = path.join(AUS, `${name}-ereignisse.json`);
-fs.writeFileSync(ereignisDatei, JSON.stringify({ fps, ereignisse }));
+fs.writeFileSync(ereignisDatei, JSON.stringify({ fps, ereignisse, bildEreignisse }));
 if (ff) {
   ff.stdin.end();
   await new Promise(ok => ff.on('close', ok));
   const wav = path.join(AUS, `${name}.wav`);
   // Ton: Geräusche aus den Vorlagen (Nutzerwunsch); --eigenton nimmt die selbst erzeugte Tonspur
-  if (process.argv.includes('--eigenton') || !fs.existsSync(path.join(WURZEL, 'werkzeuge', 'ton_vorlage.py'))) tonspur(ereignisse, wav, name, fps);
+  if (tonArt === 'pillen') tonspurPillen(bildEreignisse, wav, fps);
+  else if (process.argv.includes('--eigenton') || !fs.existsSync(path.join(WURZEL, 'werkzeuge', 'ton_vorlage.py'))) tonspur(ereignisse, wav, name, fps);
   else await new Promise((ok, nein) => spawn('python', ['-I', path.join(WURZEL, 'werkzeuge', 'ton_vorlage.py'), ereignisDatei, wav, tonVorlage], { stdio: 'inherit' }).on('close', c => c ? nein(new Error('Ton fehlgeschlagen')) : ok()));
   const fertig = path.join(AUS, (arg('--ziel') || name) + '.mp4');
   await new Promise(ok => spawn('ffmpeg', ['-y', '-v', 'error', '-i', stumm, '-i', wav, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', fertig], { stdio: 'inherit' }).on('close', ok));

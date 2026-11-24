@@ -1,0 +1,124 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Pillen Glas</title>
+<style>html,body{margin:0;background:#222}canvas{width:270px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { buehne, gold, glattesKapselNetz } from '/lib/welt.js';
+import { neuerLauf, HUEGEL, GLAS, STUFEN, FPS, GESAMT_SEK, hoehe, konfiguriere } from '/szenen/pillen-glas.js';
+import { waehleVariante } from '/lib/variante.js';
+const q = new URLSearchParams(location.search);
+const schnell = q.get('schnell') === '1';
+const V = q.get('seed') ? waehleVariante(q.get('seed')) : {};
+konfiguriere(V, schnell ? { fps: 30 } : {});
+const kx = Number(q.get('kx') ?? 1.75), ky = Number(q.get('ky') ?? 1.3), kz = Number(q.get('kz') ?? 2.8);
+const ZIEL = [Number(q.get('zx') ?? -0.15), Number(q.get('zy') ?? 0.4), 0];
+
+const b = buehne({ farbe: V.hintergrund?.farbe ?? '#c4cfdb', kamera: [kx, ky, kz], ziel: ZIEL, fov: Number(q.get('fov') ?? 40), fein: schnell ? 1 : 1.35, mitAO: !schnell });
+document.body.appendChild(b.aus);
+b.sonne.position.set(-2.5, 6, 3.5);
+b.sonne.shadow.camera.left = -3; b.sonne.shadow.camera.right = 3;
+
+// ---------- weißer Hügel mit Schanze ----------
+function huegelGeo() {
+  const H = HUEGEL, NX = 220, NZ = 40;
+  const mulde = z => 0.9 * z * z;
+  const pos = [], idx = [];
+  const xs = Array.from({ length: NX + 1 }, (_, i) => H.hinten + (H.lippe - H.hinten) * i / NX);
+  const zs = Array.from({ length: NZ + 1 }, (_, j) => -H.halbZ + 2 * H.halbZ * j / NZ);
+  // Oberseite
+  for (const x of xs) for (const z of zs) pos.push(x, hoehe(x) + mulde(z), z);
+  for (let i = 0; i < NX; i++) for (let j = 0; j < NZ; j++) {
+    const a = i * (NZ + 1) + j, c = a + NZ + 1;
+    idx.push(a, a + 1, c, a + 1, c + 1, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  // Seitenwände + Stirnseite (eigene Flächen, damit die Kanten scharf bleiben)
+  const wand = [], wi = [];
+  const quad = (p0, p1, p2, p3) => { const o = wand.length / 3; wand.push(...p0, ...p1, ...p2, ...p3); wi.push(o, o + 1, o + 2, o, o + 2, o + 3); };
+  for (const s of [-1, 1]) for (let i = 0; i < NX; i++) {
+    const z = s * H.halbZ, x0 = xs[i], x1 = xs[i + 1];
+    const y0 = hoehe(x0) + mulde(z), y1 = hoehe(x1) + mulde(z);
+    if (s > 0) quad([x0, 0, z], [x1, 0, z], [x1, y1, z], [x0, y0, z]); else quad([x1, 0, z], [x0, 0, z], [x0, y0, z], [x1, y1, z]);
+  }
+  for (const [x, s] of [[H.lippe, 1], [H.hinten, -1]]) for (let j = 0; j < NZ; j++) {
+    const z0 = zs[j], z1 = zs[j + 1];
+    const y0 = hoehe(x) + mulde(z0), y1 = hoehe(x) + mulde(z1);
+    if (s > 0) quad([x, 0, z1], [x, 0, z0], [x, y0, z0], [x, y1, z1]); else quad([x, 0, z0], [x, 0, z1], [x, y1, z1], [x, y0, z0]);
+  }
+  const g2 = new THREE.BufferGeometry();
+  g2.setAttribute('position', new THREE.Float32BufferAttribute(wand, 3));
+  g2.setIndex(wi); g2.computeVertexNormals();
+  return [geo, g2];
+}
+const weiss = new THREE.MeshPhysicalMaterial({ color: '#f4f2ee', roughness: 0.42, clearcoat: 0.25, clearcoatRoughness: 0.3, envMapIntensity: 0.6 });
+for (const g of huegelGeo()) { const m = new THREE.Mesh(g, weiss); m.castShadow = m.receiveShadow = true; b.szene.add(m); }
+
+// ---------- Trinkglas ----------
+{
+  const G = GLAS, rr = (G.ra - G.ri) / 2;
+  const prof = [new THREE.Vector2(0.0001, 0), new THREE.Vector2(G.ra - 0.006, 0), new THREE.Vector2(G.ra, 0.006), new THREE.Vector2(G.ra, G.h - rr)];
+  for (let k = 0; k <= 8; k++) { const a = k / 8 * Math.PI; prof.push(new THREE.Vector2(G.ri + rr + Math.cos(a) * rr, G.h - rr + Math.sin(a) * rr)); }
+  prof.push(new THREE.Vector2(G.ri, G.boden + 0.006), new THREE.Vector2(G.ri - 0.006, G.boden), new THREE.Vector2(0.0001, G.boden));
+  const geo = new THREE.LatheGeometry(prof, 96);
+  const glas = new THREE.MeshPhysicalMaterial({
+    color: '#e6f2ff', metalness: 0, roughness: 0.03, transmission: 0.9, thickness: 0.06, ior: 1.52,
+    attenuationColor: '#bcd8f0', attenuationDistance: 0.35, clearcoat: 1, clearcoatRoughness: 0.02,
+    envMapIntensity: 2.2, specularIntensity: 1, side: THREE.DoubleSide, transparent: true,
+  });
+  const m = new THREE.Mesh(geo, glas);
+  m.position.set(G.x, 0, 0);
+  m.castShadow = false; m.receiveShadow = true;
+  b.szene.add(m);
+  // sehr schwacher Schatten des Glases (Glas wirft kaum Schatten)
+  const sch = new THREE.Mesh(new THREE.CircleGeometry(G.ra * 1.05, 64), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.07 }));
+  sch.rotation.x = -Math.PI / 2; sch.position.set(G.x + 0.03, 0.0008, -0.02); b.szene.add(sch);
+}
+
+// ---------- Pillen ----------
+const goldMat = gold(V.material ?? {}); goldMat.side = THREE.DoubleSide;
+const lauf = neuerLauf();
+const netze = lauf.pillen.map((_, i) => {
+  const o = lauf.oberflaeche(i);
+  const netz = glattesKapselNetz(o.ns, o.nv, 3);
+  const mesh = new THREE.Mesh(netz.geo, goldMat);
+  mesh.castShadow = mesh.receiveShadow = true; mesh.visible = false;
+  netz.aktualisiere(o.ringe, o.spL, o.spR);
+  b.szene.add(mesh);
+  return { netz, mesh };
+});
+function aktualisiere() {
+  lauf.pillen.forEach((pl, i) => {
+    netze[i].mesh.visible = pl.aktiv;
+    if (!pl.aktiv) return;
+    const o = lauf.oberflaeche(i); netze[i].netz.aktualisiere(o.ringe, o.spL, o.spR);
+  });
+}
+const sichtbar = p => { const v = new THREE.Vector3(...p).project(b.cam); return Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02 && v.z < 1; };
+const seitlich = p => new THREE.Vector3(...p).project(b.cam).x;
+
+const PROBEN = schnell ? 2 : 3;
+window.GESAMT = Math.round(GESAMT_SEK * FPS);
+window.FPS = FPS;
+window.TONART = 'pillen';
+const kamStart = b.cam.position.clone();
+window.bild = (f, nurPhysik = false) => {
+  const halb = lauf.sub / 2, je = halb / PROBEN;
+  lauf.schritte(halb);
+  const fertig = () => lauf.ereignisse().map(e => ({ ...e, sichtbar: sichtbar(e.pos), pan: seitlich(e.pos) }));
+  if (nurPhysik) { lauf.schritte(halb); return { ereignisse: fertig(), runde: 0, neu: false, aufprall: 0 }; }
+  const v = f / window.GESAMT;
+  b.cam.position.set(kamStart.x - 0.12 * v, kamStart.y - 0.04 * v, kamStart.z - 0.1 * v);
+  b.cam.lookAt(...ZIEL);
+  b.mischeAnfang();
+  for (let s = 0; s < PROBEN; s++) { lauf.schritte(je); aktualisiere(); b.mischeBild(); }
+  const ereignisse = fertig();
+  const jpg = b.mischeEnde(`${lauf.aktuelleStufe()}% SOFT`);
+  return { jpg, ereignisse, runde: STUFEN.indexOf(lauf.aktuelleStufe()), neu: false, aufprall: 0 };
+};
+window.BEREIT = true;
+</script>
+</body></html>
