@@ -1,0 +1,109 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Kugel Ringe</title>
+<style>html,body{margin:0;background:#222}canvas{width:270px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { buehne, gold, glattesKapselNetz, zufall } from '/lib/welt.js';
+import { neueRunde, RINGE, KEGEL, STUFEN, FPS, TAKT, konfiguriere, kegelProfil } from '/szenen/kugel-ringe.js';
+import { waehleVariante } from '/lib/variante.js';
+const q = new URLSearchParams(location.search);
+const schnell = q.get('schnell') === '1';
+const V = q.get('seed') ? waehleVariante(q.get('seed')) : {};
+konfiguriere(V, schnell ? { fps: 30 } : {});
+const kam = [Number(q.get('kx') ?? 0.95), Number(q.get('ky') ?? 1.35), Number(q.get('kz') ?? 1.95)];
+const ZIEL = [0, Number(q.get('zy') ?? 0.66), 0];
+const HG = '#' + new THREE.Color(V.hintergrund?.farbe ?? '#b8949c').multiplyScalar(0.82).getHexString();   // kräftiger als die Pastelltöne
+
+const b = buehne({ farbe: HG, kamera: kam, ziel: ZIEL, fov: Number(q.get('fov') ?? 42), fein: 1, mitAO: !schnell });
+document.body.appendChild(b.aus);
+b.sonne.position.set(-2.4, 4.5, 2.2);
+b.sonne.intensity = 2.8;
+b.sonne.shadow.camera.left = -1.2; b.sonne.shadow.camera.right = 1.2; b.sonne.shadow.camera.top = 2; b.sonne.shadow.camera.bottom = -1;
+b.sonne.shadow.radius = 10;
+
+// ---------- Granit: dunkler, gesprenkelter Stein mit fühlbarer Oberfläche ----------
+function granit(seed) {
+  const N = 1024, z = zufall(seed);
+  const farbe = document.createElement('canvas'); farbe.width = farbe.height = N;
+  const hoehe = document.createElement('canvas'); hoehe.width = hoehe.height = N;
+  const g = farbe.getContext('2d'), h = hoehe.getContext('2d');
+  g.fillStyle = '#6a6866'; g.fillRect(0, 0, N, N);
+  h.fillStyle = '#808080'; h.fillRect(0, 0, N, N);
+  const wrap = (x, y, r, fn) => { for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) if (x + dx > -r && x + dx < N + r && y + dy > -r && y + dy < N + r) fn(x + dx, y + dy); };
+  // wolkige Flecken
+  for (let i = 0; i < 500; i++) {
+    const x = z() * N, y = z() * N, r = 30 + z() * 120, hell = z() < 0.5;
+    wrap(x, y, r, (X, Y) => { const gr = g.createRadialGradient(X, Y, 0, X, Y, r); gr.addColorStop(0, hell ? 'rgba(150,148,144,0.18)' : 'rgba(40,40,42,0.2)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(X - r, Y - r, 2 * r, 2 * r); });
+  }
+  // Körner: hell, dunkel, ein paar warme
+  const korn = [['#2b2a2b', 9000, 2.2, 1], ['#a9a6a1', 7000, 1.8, 0], ['#d6d2cb', 2200, 1.4, 0], ['#8a7a6a', 900, 1.6, 0], ['#1a1a1b', 1800, 3.2, 1]];
+  for (const [f, n, rmax, tief] of korn) for (let i = 0; i < n; i++) {
+    const x = z() * N, y = z() * N, r = 0.6 + z() ** 2 * rmax;
+    wrap(x, y, r, (X, Y) => {
+      g.fillStyle = f; g.beginPath(); g.ellipse(X, Y, r * (0.8 + z() * 0.6), r, z() * 3, 0, 7); g.fill();
+      h.fillStyle = tief ? '#5a5a5a' : '#a8a8a8'; h.beginPath(); h.arc(X, Y, r, 0, 7); h.fill();
+    });
+  }
+  // feines Rauschen in der Höhe
+  const id = h.getImageData(0, 0, N, N);
+  for (let i = 0; i < id.data.length; i += 4) { const n = (z() - 0.5) * 30; id.data[i] += n; id.data[i + 1] += n; id.data[i + 2] += n; }
+  h.putImageData(id, 0, 0);
+  const tex = (cv, srgb) => { const t = new THREE.CanvasTexture(cv); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
+  return new THREE.MeshStandardMaterial({ map: tex(farbe, true), bumpMap: tex(hoehe), bumpScale: 1.2, roughness: 0.58, metalness: 0, envMapIntensity: 0.9 });
+}
+const goldMat = gold({ farbe: '#ffc95a', rau: 0.12 });
+function mitWdh(mat, u, v) { const m = mat.clone(); for (const k of ['map', 'bumpMap']) { m[k] = mat[k].clone(); m[k].needsUpdate = true; m[k].repeat.set(u, v); } return m; }
+const stein = granit(V.steinSaat ?? 17);
+
+// ---------- schwebende Granitringe mit Goldstreifen ----------
+for (const R of RINGE) {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(R.R, R.r, 64, 220), mitWdh(stein, 5, 1.2));
+  m.rotation.x = Math.PI / 2; m.position.y = R.y; m.castShadow = m.receiveShadow = true; b.szene.add(m);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(R.R + R.r - 0.0015, 0.0042, 16, 220), goldMat);
+  band.rotation.x = Math.PI / 2; band.position.y = R.y; band.castShadow = true; b.szene.add(band);
+}
+// ---------- Steinkegel mit Goldring am Fuß ----------
+{
+  const pts = kegelProfil(10).map(([q, y]) => new THREE.Vector2(Math.max(q, 0.00001), y));
+  const geo = new THREE.LatheGeometry(pts, 160);
+  const m = new THREE.Mesh(geo, mitWdh(stein, 3, 1)); m.castShadow = m.receiveShadow = true; b.szene.add(m);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(KEGEL.Rb * 0.86, 0.006, 16, 160), goldMat);
+  band.rotation.x = Math.PI / 2; band.position.y = KEGEL.h * 0.14; b.szene.add(band);
+}
+
+// ---------- Kugel ----------
+const mat = gold(V.material ?? {}); mat.side = THREE.DoubleSide;
+let runde = null, rundeNr = -1, netz = null;
+function neu(nr) {
+  runde = neueRunde(STUFEN[nr]);
+  const o = runde.oberflaeche();
+  if (!netz) { netz = glattesKapselNetz(o.ns, o.nv, 3); const me = new THREE.Mesh(netz.geo, mat); me.castShadow = me.receiveShadow = true; b.szene.add(me); }
+  netz.aktualisiere(o.ringe, o.spL, o.spR);
+}
+const sichtbar = p => { const v = new THREE.Vector3(...p).project(b.cam); return Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02 && v.z < 1; };
+const seitlich = p => new THREE.Vector3(...p).project(b.cam).x;
+
+const proRunde = Math.round(FPS * TAKT);
+const PROBEN = 2;
+window.GESAMT = proRunde * STUFEN.length;
+window.FPS = FPS;
+window.TONART = 'kugel';
+window.bild = (f, nurPhysik = false) => {
+  const nr = Math.floor(f / proRunde);
+  const neuR = nr !== rundeNr;
+  if (neuR) { rundeNr = nr; neu(nr); }
+  const halb = runde.sub / 2, je = halb / PROBEN;
+  runde.schritte(halb);
+  const fertig = () => runde.ereignisse().map(e => ({ ...e, runde: nr, sichtbar: sichtbar(e.pos), pan: seitlich(e.pos) }));
+  if (nurPhysik) { runde.schritte(halb); return { ereignisse: fertig(), runde: nr, neu: neuR, aufprall: 0 }; }
+  b.mischeAnfang();
+  for (let s = 0; s < PROBEN; s++) { runde.schritte(je); const o = runde.oberflaeche(); netz.aktualisiere(o.ringe, o.spL, o.spR); b.mischeBild(); }
+  const ereignisse = fertig();
+  const jpg = b.mischeEnde(`${STUFEN[nr]}% SOFT`);
+  return { jpg, ereignisse, runde: nr, neu: neuR, aufprall: 0 };
+};
+window.BEREIT = true;
+</script>
+</body></html>
