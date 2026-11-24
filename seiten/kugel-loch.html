@@ -1,0 +1,96 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Kugel Loch</title>
+<style>html,body{margin:0;background:#222}canvas{width:270px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { buehne, gold, stein, glattesKapselNetz } from '/lib/welt.js';
+import { neueRunde, PLATTE, STUETZE, KUGEL, STUFEN, FPS, TAKT, konfiguriere, trichterProfil, schalenProfil } from '/szenen/kugel-loch.js';
+import { waehleVariante } from '/lib/variante.js';
+const q = new URLSearchParams(location.search);
+const schnell = q.get('schnell') === '1';
+const V = q.get('seed') ? waehleVariante(q.get('seed')) : {};
+konfiguriere(V, schnell ? { fps: 30 } : {});
+const P = PLATTE, S = STUETZE;
+const kam = [Number(q.get('kx') ?? 0), Number(q.get('ky') ?? 0.86), Number(q.get('kz') ?? 1.62)];
+const ZIEL = [0, Number(q.get('zy') ?? 0.47), 0];
+
+const b = buehne({ farbe: V.hintergrund?.farbe ?? '#c9c4bd', kamera: kam, ziel: ZIEL, fov: Number(q.get('fov') ?? 40), fein: schnell ? 1 : 1.35, mitAO: !schnell });
+document.body.appendChild(b.aus);
+b.sonne.position.set(-2.2, 5, 3);
+b.sonne.shadow.camera.left = -1.5; b.sonne.shadow.camera.right = 1.5; b.sonne.shadow.camera.top = 2; b.sonne.shadow.camera.bottom = -1;
+b.sonne.shadow.radius = 8;
+
+function beton(seed, wdh) {
+  const m = stein(seed, { sprenkel: 0.35, ton: [188, 185, 179] });
+  for (const t of [m.map, m.roughnessMap, m.metalnessMap]) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(wdh, wdh / 2); }
+  return m;
+}
+
+// ---------- runde Betonscheibe mit Trichterloch + Schale darunter (gleiche Form wie die Physik) ----------
+function drehkoerper(profil, mat) {
+  const pts = profil.map(([q, y]) => new THREE.Vector2(Math.max(q, 0.00001), y));
+  pts.push(pts[0].clone());
+  const geo = new THREE.LatheGeometry(pts, 160);
+  // Maserung von oben projizieren (sonst Sternstreifen durch die Drehform)
+  const pa = geo.attributes.position, uv = geo.attributes.uv;
+  for (let i = 0; i < pa.count; i++) uv.setXY(i, pa.getX(i) * 1.6 + pa.getY(i) * 0.9 + 0.5, pa.getZ(i) * 1.6 + pa.getY(i) * 0.5 + 0.5);
+  uv.needsUpdate = true;
+  const m = new THREE.Mesh(geo, mat); m.castShadow = m.receiveShadow = true; b.szene.add(m); return m;
+}
+drehkoerper(trichterProfil(10), beton(21, 1));
+drehkoerper(schalenProfil(10), beton(44, 1));
+// ---------- zwei Stützen ----------
+{
+  const unten = P.oben - P.T, w = S.aussen - S.innen;
+  for (const s of [-1, 1]) {
+    const geo = new RoundedBoxGeometry(w, unten + 0.004, 2 * (P.hz - 0.02), 6, 0.012);
+    const m = new THREE.Mesh(geo, beton(30 + s, 1));
+    m.position.set(s * (S.innen + w / 2), unten / 2, 0);
+    m.castShadow = m.receiveShadow = true; b.szene.add(m);
+  }
+}
+
+// ---------- Kugel ----------
+const mat = gold(V.material ?? {}); mat.side = THREE.DoubleSide;
+let runde = null, rundeNr = -1, netz = null, mesh = null;
+function neu(nr) {
+  runde = neueRunde(STUFEN[nr]);
+  const o = runde.oberflaeche();
+  if (!netz) {
+    netz = glattesKapselNetz(o.ns, o.nv, 3);
+    mesh = new THREE.Mesh(netz.geo, mat); mesh.castShadow = mesh.receiveShadow = true; b.szene.add(mesh);
+  }
+  netz.aktualisiere(o.ringe, o.spL, o.spR);
+}
+const sichtbar = p => { const v = new THREE.Vector3(...p).project(b.cam); return Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02 && v.z < 1; };
+const seitlich = p => new THREE.Vector3(...p).project(b.cam).x;
+
+const proRunde = Math.round(FPS * TAKT);
+const PROBEN = schnell ? 2 : 3;
+window.GESAMT = proRunde * STUFEN.length;
+window.FPS = FPS;
+window.TONART = 'kugel';
+window.bild = (f, nurPhysik = false) => {
+  const nr = Math.floor(f / proRunde);
+  const neuR = nr !== rundeNr;
+  if (neuR) { rundeNr = nr; neu(nr); }
+  const halb = runde.sub / 2, je = halb / PROBEN;
+  runde.schritte(halb);
+  const fertig = () => runde.ereignisse().map(e => ({ ...e, runde: nr, sichtbar: sichtbar(e.pos), pan: seitlich(e.pos) }));
+  if (nurPhysik) { runde.schritte(halb); return { ereignisse: fertig(), runde: nr, neu: neuR, aufprall: 0 }; }
+  b.mischeAnfang();
+  for (let s = 0; s < PROBEN; s++) {
+    runde.schritte(je);
+    const o = runde.oberflaeche(); netz.aktualisiere(o.ringe, o.spL, o.spR);
+    b.mischeBild();
+  }
+  const ereignisse = fertig();
+  const jpg = b.mischeEnde(`SOFT ${STUFEN[nr]}%`);
+  return { jpg, ereignisse, runde: nr, neu: neuR, aufprall: 0 };
+};
+window.BEREIT = true;
+</script>
+</body></html>
