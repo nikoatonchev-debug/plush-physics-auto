@@ -143,14 +143,6 @@ export function welt() {
   };
 }
 
-// Wackeln dämpfen: jede Ecke wird zur gemeinsamen Bewegung hingezogen (Rutschen bleibt erhalten)
-function beruhige(kp, k) {
-  const v = kp.v, n = v.length / 3; let a = 0, b = 0, c = 0;
-  for (let i = 0; i < n; i++) { a += v[3 * i]; b += v[3 * i + 1]; c += v[3 * i + 2]; }
-  a /= n; b /= n; c /= n; const f = Math.max(0, 1 - k);
-  for (let i = 0; i < n; i++) { v[3 * i] = a + (v[3 * i] - a) * f; v[3 * i + 1] = b + (v[3 * i + 1] - b) * f; v[3 * i + 2] = c + (v[3 * i + 2] - c) * f; }
-}
-
 export function neueRunde(stufe, ueber = {}) {
   const W = welt();
   const sub = ueber.sub ?? SUBSCHRITTE;
@@ -173,17 +165,6 @@ export function neueRunde(stufe, ueber = {}) {
         kp.schritt(dt, W); this.zeit += dt;
         // nach dem Aufklatschen unten langsam beruhigen (sonst wabbelt sie ewig)
         if (!starr && this.unten !== undefined && this.zeit - this.unten > 0.5) kp.daempf = Math.min(4, kp.daempf + dt * 4);
-        if (!starr && this.ruhe > 0) beruhige(kp, this.ruhe * dt);
-      }
-      if (!starr) {
-        // Steckt die Kugel fest (Mitte bewegt sich kaum), klingt das Wackeln zügig aus.
-        // Gedämpft wird nur das Wackeln, nicht das Rutschen – langsames Durchquetschen geht weiter.
-        // „Fest“ heißt: über die letzten 0,4 s kaum vom Fleck gekommen (Hin-und-her-Schaukeln zählt nicht als Bewegung)
-        const m1 = this.mitte(), spur = (this.spur ??= []);
-        spur.push([this.zeit, m1]); while (spur.length > 2 && this.zeit - spur[1][0] > 0.4) spur.shift();
-        const [ta, ma] = spur[0], weg = Math.hypot(m1[0] - ma[0], m1[1] - ma[1], m1[2] - ma[2]);
-        this.still = this.zeit - ta > 0.35 && weg < 0.012 && this.zeit > 0.5 ? (this.still ?? 0) + k * dt : 0;
-        this.ruhe = this.still > 0.25 ? Math.min(14, (this.ruhe ?? 0) + k * dt * 20) : Math.max(0, (this.ruhe ?? 0) - k * dt * 40);
       }
       if (kp.aktualisiere) kp.aktualisiere();
     },
