@@ -8,6 +8,7 @@ import puppeteer from 'puppeteer-core';
 import { tonspur } from './ton.mjs';
 import { tonspurPillen } from './ton_pillen.mjs';
 import { tonspurKugel } from './ton_kugel.mjs';
+import { tonspurPendel } from './ton_pendel.mjs';
 
 const WURZEL = path.resolve(import.meta.dirname, '..');
 const name = process.argv[2] || 'ring-steinturm';
@@ -76,6 +77,7 @@ if (ff) {
   // Ton: Geräusche aus den Vorlagen (Nutzerwunsch); --eigenton nimmt die selbst erzeugte Tonspur
   if (tonArt === 'pillen') tonspurPillen(bildEreignisse, wav, fps);
   else if (tonArt === 'kugel') tonspurKugel(bildEreignisse, wav, fps);
+  else if (tonArt === 'pendel') tonspurPendel(bildEreignisse, wav, fps);
   else if (process.argv.includes('--eigenton') || !fs.existsSync(path.join(WURZEL, 'werkzeuge', 'ton_vorlage.py'))) tonspur(ereignisse, wav, name, fps);
   else await new Promise((ok, nein) => spawn('python', ['-I', path.join(WURZEL, 'werkzeuge', 'ton_vorlage.py'), ereignisDatei, wav, tonVorlage], { stdio: 'inherit' }).on('close', c => c ? nein(new Error('Ton fehlgeschlagen')) : ok()));
   const fertig = path.join(AUS, (arg('--ziel') || name) + '.mp4');

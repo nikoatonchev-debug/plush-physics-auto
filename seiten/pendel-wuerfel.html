@@ -1,0 +1,143 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Pendel Wuerfel</title>
+<style>html,body{margin:0;background:#222}canvas{width:270px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { buehne, gold, zufall } from '/lib/welt.js';
+import { STUFEN, FPS, TAKT, WUERFEL, LOCH, PENDEL, kloetze, pendelLage, neueRunde, konfiguriere } from '/szenen/pendel-wuerfel.js';
+const q = new URLSearchParams(location.search);
+const schnell = q.get('schnell') === '1';
+konfiguriere({}, schnell ? { fps: 30 } : {});
+const kam = [Number(q.get('kx') ?? 1.75), Number(q.get('ky') ?? 1.2), Number(q.get('kz') ?? 2.25)];
+const ZIEL = [Number(q.get('zx') ?? 0.04), Number(q.get('zy') ?? 0.4), 0];
+const HG = q.get('hg') ? '#' + q.get('hg') : '#' + new THREE.Color('#b8949c').multiplyScalar(0.82).getHexString();
+
+const b = buehne({ farbe: HG, kamera: kam, ziel: ZIEL, fov: Number(q.get('fov') ?? 42), fein: 1, mitAO: !schnell });
+document.body.appendChild(b.aus);
+b.cam.updateMatrixWorld(); b.cam.matrixWorldInverse.copy(b.cam.matrixWorld).invert();
+b.sonne.position.set(-1.6, 4.5, 3.0);
+b.sonne.intensity = 2.8;
+b.sonne.shadow.camera.left = -1.5; b.sonne.shadow.camera.right = 1.5; b.sonne.shadow.camera.top = 2; b.sonne.shadow.camera.bottom = -1;
+b.sonne.shadow.radius = 8;
+
+// ---------- Granit (wie bei den Ringen) ----------
+function granit(seed) {
+  const N = 1024, z = zufall(seed);
+  const farbe = document.createElement('canvas'); farbe.width = farbe.height = N;
+  const hoehe = document.createElement('canvas'); hoehe.width = hoehe.height = N;
+  const g = farbe.getContext('2d'), h = hoehe.getContext('2d');
+  g.fillStyle = '#6a6866'; g.fillRect(0, 0, N, N);
+  h.fillStyle = '#808080'; h.fillRect(0, 0, N, N);
+  const wrap = (x, y, r, fn) => { for (const dx of [-N, 0, N]) for (const dy of [-N, 0, N]) if (x + dx > -r && x + dx < N + r && y + dy > -r && y + dy < N + r) fn(x + dx, y + dy); };
+  for (let i = 0; i < 500; i++) {
+    const x = z() * N, y = z() * N, r = 30 + z() * 120, hell = z() < 0.5;
+    wrap(x, y, r, (X, Y) => { const gr = g.createRadialGradient(X, Y, 0, X, Y, r); gr.addColorStop(0, hell ? 'rgba(150,148,144,0.18)' : 'rgba(40,40,42,0.2)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(X - r, Y - r, 2 * r, 2 * r); });
+  }
+  const korn = [['#2b2a2b', 9000, 2.2, 1], ['#a9a6a1', 7000, 1.8, 0], ['#d6d2cb', 2200, 1.4, 0], ['#8a7a6a', 900, 1.6, 0], ['#1a1a1b', 1800, 3.2, 1]];
+  for (const [f, n, rmax, tief] of korn) for (let i = 0; i < n; i++) {
+    const x = z() * N, y = z() * N, r = 0.6 + z() ** 2 * rmax;
+    wrap(x, y, r, (X, Y) => {
+      g.fillStyle = f; g.beginPath(); g.ellipse(X, Y, r * (0.8 + z() * 0.6), r, z() * 3, 0, 7); g.fill();
+      h.fillStyle = tief ? '#5a5a5a' : '#a8a8a8'; h.beginPath(); h.arc(X, Y, r, 0, 7); h.fill();
+    });
+  }
+  const id = h.getImageData(0, 0, N, N);
+  for (let i = 0; i < id.data.length; i += 4) { const n = (z() - 0.5) * 30; id.data[i] += n; id.data[i + 1] += n; id.data[i + 2] += n; }
+  h.putImageData(id, 0, 0);
+  const tex = (cv, srgb) => { const t = new THREE.CanvasTexture(cv); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; return t; };
+  return new THREE.MeshStandardMaterial({ map: tex(farbe, true), bumpMap: tex(hoehe), bumpScale: 1.2, roughness: 0.55, metalness: 0, envMapIntensity: 0.9 });
+}
+const goldMat = gold({ farbe: '#ffc95a', rau: 0.12 });
+
+// ---------- Würfel aus Klötzchen (eine Instanz-Gruppe, jedes Klötzchen leicht anderer Ton) ----------
+const K = kloetze(), bk = WUERFEL.b;
+const kGeo = new RoundedBoxGeometry(bk * 0.985, bk * 0.985, bk * 0.985, 2, bk * 0.12);
+const kMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.62, metalness: 0, envMapIntensity: 0.8 });
+const kNetz = new THREE.InstancedMesh(kGeo, kMat, K.length);
+kNetz.castShadow = kNetz.receiveShadow = true;
+{
+  const zz = zufall(5), m = new THREE.Matrix4(), c = new THREE.Color();
+  const basis = new THREE.Color(q.get('kf') ? '#' + q.get('kf') : '#efe6d8');
+  K.forEach((p, i) => {
+    m.makeTranslation(...p); kNetz.setMatrixAt(i, m);
+    const v = 0.93 + zz() * 0.1; c.copy(basis).multiplyScalar(v); kNetz.setColorAt(i, c);
+  });
+}
+b.szene.add(kNetz);
+
+// ---------- Steinpendel: Kapsel entlang x mit Goldbändern, Stange nach oben ----------
+const pendel = new THREE.Group();
+{
+  const P = PENDEL, lz = P.l - 2 * P.r;
+  const stein = granit(17);
+  for (const k of ['map', 'bumpMap']) stein[k].repeat.set(1, 1);
+  const kGeo = new THREE.CapsuleGeometry(P.r, lz, 24, 96);
+  { // Maserung um die Kapsel wickeln (sonst Streifen): u = Winkel, v = Länge
+    const pa = kGeo.attributes.position, uv = kGeo.attributes.uv;
+    for (let i = 0; i < pa.count; i++) uv.setXY(i, Math.atan2(pa.getZ(i), pa.getX(i)) / Math.PI * 0.8, pa.getY(i) * 1.6);
+    uv.needsUpdate = true;
+  }
+  const kap = new THREE.Mesh(kGeo, stein);
+  kap.rotation.z = Math.PI / 2; kap.castShadow = kap.receiveShadow = true; pendel.add(kap);
+  for (const s of [-1, 1]) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(P.r + 0.0005, 0.0045, 16, 96), goldMat);
+    band.rotation.y = Math.PI / 2; band.position.x = s * lz * 0.38; band.castShadow = true; pendel.add(band);
+  }
+  const kappe = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.022, 0.03, 32), goldMat);
+  kappe.position.y = P.r + 0.008; kappe.castShadow = true; pendel.add(kappe);
+  const stange = new THREE.Mesh(new THREE.CylinderGeometry(0.0055, 0.0055, P.L, 16), goldMat);
+  stange.position.y = P.L / 2; stange.castShadow = true; pendel.add(stange);
+}
+b.szene.add(pendel);
+function setzePendel(w) {
+  const L = pendelLage(w);
+  pendel.position.set(...L.mitte); pendel.rotation.set(0, 0, w);
+}
+
+const proRunde = Math.round(FPS * TAKT);
+const PROBEN = 2;
+let runde = null, rundeNr = -1;
+const mm = new THREE.Matrix4(), pp = new THREE.Vector3(), qq = new THREE.Quaternion(), ee = new THREE.Vector3(1, 1, 1);
+function zeigen() {
+  const s = runde.sim;
+  for (let i = 0; i < s.n; i++) {
+    pp.set(s.x[3 * i], s.x[3 * i + 1], s.x[3 * i + 2]); qq.set(s.q[4 * i], s.q[4 * i + 1], s.q[4 * i + 2], s.q[4 * i + 3]);
+    qq.normalize(); mm.compose(pp, qq, ee); kNetz.setMatrixAt(i, mm);
+  }
+  kNetz.instanceMatrix.needsUpdate = true;
+  setzePendel(s.P.phi);
+}
+const sichtbar = p => { const v = new THREE.Vector3(...p).project(b.cam); return Math.abs(v.x) < 1.02 && Math.abs(v.y) < 1.02 && v.z < 1; };
+const seitlich = p => new THREE.Vector3(...p).project(b.cam).x;
+window.GESAMT = proRunde * STUFEN.length;
+window.FPS = FPS;
+window.TONART = 'pendel';
+window.bild = (f, nurPhysik = false) => {
+  const nr = Math.floor(f / proRunde);
+  const neuR = nr !== rundeNr;
+  if (neuR) { rundeNr = nr; runde = neueRunde(STUFEN[nr]); }
+  // Physik einmal pro Bild (Teilschritte stecken darin); für Bewegungsunschärfe zwischen alter und neuer Lage mischen
+  const s = runde.sim;
+  const alt = { x: s.x.slice(), q: s.q.slice(), phi: s.P.phi };
+  runde.bild();
+  const ereignisse = runde.ereignisse().map(e => ({ ...e, runde: nr, sichtbar: sichtbar(e.pos), pan: seitlich(e.pos) }));
+  if (nurPhysik) return { ereignisse, runde: nr, neu: neuR, aufprall: 0 };
+  b.mischeAnfang();
+  const neu = { x: s.x.slice(), q: s.q.slice(), phi: s.P.phi };
+  for (let k = 0; k < PROBEN; k++) {
+    const t = (k + 1) / PROBEN;
+    for (let i = 0; i < s.x.length; i++) s.x[i] = alt.x[i] + (neu.x[i] - alt.x[i]) * (0.5 + 0.5 * t);
+    for (let i = 0; i < s.q.length; i++) s.q[i] = t < 1 ? alt.q[i] + (neu.q[i] - alt.q[i]) * (0.5 + 0.5 * t) : neu.q[i];
+    s.P.phi = alt.phi + (neu.phi - alt.phi) * (0.5 + 0.5 * t);
+    zeigen(); b.mischeBild();
+  }
+  s.x.set(neu.x); s.q.set(neu.q); s.P.phi = neu.phi;
+  const kg = String(STUFEN[nr]).replace('.', ',');
+  return { jpg: b.mischeEnde(`${kg} KG`), ereignisse, runde: nr, neu: neuR, aufprall: 0 };
+};
+window.BEREIT = true;
+</script>
+</body></html>
