@@ -86,8 +86,7 @@ export function tonspurKugel(bilder, datei, FPS = 60, TAKT = 4) {
     norm(koerper);
     const nass = bandRausch(0.12, um(1300, 1700) * (1 - 0.3 * weich), 2.2, z, t => (1 - Math.exp(-t * 600)) * Math.exp(-t * (55 - 25 * weich)));
     norm(nass);
-    const hart = 1 - weich;
-    const kl = hart > 0.6 ? klack(staerke * 0.35) : null;
+    const kl = null;   // weiche Kugel: nie das metallische „Ding“ der harten Kugel dazumischen
     const g = Math.min(1, staerke / 3.5) ** 0.7;
     const s = new Float32Array(Math.max(koerper.length, kl ? kl.length : 0));
     for (let i = 0; i < s.length; i++) s[i] = ((koerper[i] || 0) * 0.95 + (nass[i] || 0) * (0.18 + 0.4 * weich) + (kl ? kl[i] * 0.4 : 0)) * g;
